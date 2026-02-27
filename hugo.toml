@@ -1,3 +1,9 @@
-baseURL = 'www.lenslanding.com/'
+baseURL = 'http://www.lenslanding.com/'
 languageCode = 'en-us'
-title = 'Better Visualizer'
+title = 'BetterViz'
+
+[params]
+  description = 'Interactive multi-dimensional data visualizer'
+
+[markup.goldmark.renderer]
+  unsafe = true

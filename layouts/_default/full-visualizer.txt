@@ -1418,6 +1418,7 @@
         
         function resetAllChanges() {
             if (!originalData) return;
+            if (!confirm('Reset all changes? All your modifications will be reverted and cannot be undone. Are you sure you want to continue?')) return;
             
             // Deep copy original data back to current
             currentData = JSON.parse(JSON.stringify(originalData));

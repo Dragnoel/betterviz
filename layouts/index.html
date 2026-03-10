@@ -1720,33 +1720,57 @@
         ];
         
         const RESERVED_COLUMNS = ['description', 'title', 'name'];
-
-        // Explicit column prefix conventions (checked before heuristics)
-        const COLUMN_PREFIXES = { dim: 'dim::', desc: 'desc::', res: 'res::', med: 'med::' };
-
-        function getColumnPrefix(header) {
-            for (const [type, prefix] of Object.entries(COLUMN_PREFIXES)) {
-                if (header.startsWith(prefix)) return type;
+        
+        // Fallback: treat these column names as descriptive (excluded from dimensions & tooltip, shown in modal)
+        const DESC_LIKE_COLUMNS = ['gloss', 'glossing', 'transcription', 'transcript', 'translation', 'meaning', 'orthography', 'description', 'text', 'sentence'];
+        
+        // Column prefix convention: type::columnName (opt-in, fallback to heuristics if no prefix)
+        const COLUMN_PREFIXES = { 'dim::': 'dim', 'med::': 'med', 'desc::': 'desc', 'res::': 'res' };
+        
+        function parseColumnPrefix(header) {
+            for (const [prefix, type] of Object.entries(COLUMN_PREFIXES)) {
+                if (header.startsWith(prefix)) {
+                    return { type, displayName: header.slice(prefix.length), key: header };
+                }
             }
             return null;
         }
-
-        function stripPrefix(header) {
-            for (const prefix of Object.values(COLUMN_PREFIXES)) {
-                if (header.startsWith(prefix)) return header.slice(prefix.length);
+        
+        function getDisplayName(header) {
+            const parsed = parseColumnPrefix(header);
+            return parsed ? parsed.displayName : header;
+        }
+        
+        function dimKey(dim) {
+            return dim.key != null ? dim.key : dim.name;
+        }
+        
+        function shouldExcludeFromTooltip(key) {
+            const parsed = parseColumnPrefix(key);
+            if (parsed && (parsed.type === 'res' || parsed.type === 'desc' || parsed.type === 'med')) return true;
+            const dn = getDisplayName(key);
+            if (RESERVED_COLUMNS.some(rc => dn.toLowerCase().includes(rc))) return true;
+            if (DESC_LIKE_COLUMNS.includes(dn.toLowerCase())) return true;
+            return isMediaRelatedColumn(key);
+        }
+        
+        function shouldExcludeFromModalTable(key) {
+            const parsed = parseColumnPrefix(key);
+            if (parsed && (parsed.type === 'res' || parsed.type === 'med')) return true;
+            const dn = getDisplayName(key);
+            if (RESERVED_COLUMNS.some(rc => dn.toLowerCase() === rc)) return true;
+            return isMediaRelatedColumn(key);
+        }
+        
+        function getModalTitleFromRow(row) {
+            for (const key of Object.keys(row)) {
+                if (key.startsWith('_')) continue;
+                const dn = getDisplayName(key);
+                if (dn.toLowerCase() === 'title' || dn.toLowerCase() === 'name') return row[key];
             }
-            return header;
+            return row.title || row.name || row.Name || row.Title || `Record #${(row._index ?? -1) + 1}`;
         }
-
-        function hasPrefixedColumns(headers) {
-            return headers.some(h => getColumnPrefix(h) !== null);
-        }
-
-        // Returns display name: strips prefix if present, otherwise returns as-is
-        function displayCol(header) {
-            return stripPrefix(header);
-        }
-
+        
         // Media column detection patterns
         const MEDIA_URL_PATTERNS = [
             /^(audio|image|img|photo|picture|video|media|thumbnail|thumb|poster|clip|sound|track)[-_]?(url|file|src|path|link|href)$/i,
@@ -1954,7 +1978,8 @@
         }
         
         function isMediaRelatedColumn(headerName) {
-            if (getColumnPrefix(headerName) === 'med') return true;
+            const parsed = parseColumnPrefix(headerName);
+            if (parsed && parsed.type === 'med') return true;
             return isMediaUrlColumn(headerName) || isMediaMetaColumn(headerName);
         }
 
@@ -1970,16 +1995,19 @@
         function detectMediaColumns(headers) {
             const cols = [];
             headers.forEach(h => {
-                if (getColumnPrefix(h) === 'med') {
-                    // Explicit med:: prefix — infer type from stripped name
-                    const lower = stripPrefix(h).toLowerCase();
+                const parsed = parseColumnPrefix(h);
+                const colKey = parsed ? parsed.key : h;
+                const displayName = parsed ? parsed.displayName : h;
+                const lower = displayName.toLowerCase();
+                
+                if (parsed && parsed.type === 'med') {
                     let detectedType = 'auto';
                     for (const [fragment, type] of Object.entries(MEDIA_TYPE_HINTS)) {
                         if (lower.includes(fragment)) { detectedType = type; break; }
                     }
-                    cols.push({ column: h, type: detectedType });
+                    cols.push({ column: colKey, type: detectedType });
                 } else if (isMediaUrlColumn(h)) {
-                    // Heuristic fallback — infer type from full column name
+                    // Infer type from column name
                     const lower = h.toLowerCase();
                     let detectedType = 'auto';
                     for (const [fragment, type] of Object.entries(MEDIA_TYPE_HINTS)) {
@@ -1988,7 +2016,7 @@
                             break;
                         }
                     }
-                    cols.push({ column: h, type: detectedType });
+                    cols.push({ column: colKey, type: detectedType });
                 }
             });
             return cols;
@@ -2017,11 +2045,8 @@
                     type = inferMediaTypeFromUrl(url);
                 }
                 
-                media.push({
-                    type: type,
-                    url: url.trim(),
-                    label: mc.column.replace(/[-_](url|file|src|path|link|href)$/i, '').replace(/[-_]/g, ' ')
-                });
+                const baseLabel = getDisplayName(mc.column).replace(/[-_](url|file|src|path|link|href)$/i, '').replace(/[-_]/g, ' ');
+                media.push({ type: type, url: url.trim(), label: baseLabel || 'media' });
             });
             
             // Legacy support: also check media_type + media_url columns
@@ -2196,7 +2221,7 @@
                 
                 // Cycle through each dimension's unique values
                 dimensions.forEach(dim => {
-                    row[dim.name] = dim.uniqueValues[i % dim.uniqueValues.length];
+                    row[dimKey(dim)] = dim.uniqueValues[i % dim.uniqueValues.length];
                 });
                 
                 // Fill remaining headers with empty
@@ -2236,7 +2261,7 @@
             // 2. Check every unique value in every dimension appears in at least one anchor
             for (const dim of dimensions) {
                 const anchorValuesForDim = new Set(
-                    existingDummies.map(row => row[dim.name]).filter(v => v !== undefined && v !== '')
+                    existingDummies.map(row => row[dimKey(dim)]).filter(v => v !== undefined && v !== '')
                 );
                 
                 for (const val of dim.uniqueValues) {
@@ -2252,11 +2277,8 @@
             // 3. Check anchors don't reference dimension columns that no longer exist
             const dimNames = new Set(dimensions.map(d => d.name));
             const idKey = headers[0];
-            const anchorDataKeys = Object.keys(existingDummies[0]).filter(k =>
-                !k.startsWith('_') &&
-                k !== idKey &&
-                !isReservedColumn(k) &&
-                !isMediaRelatedColumn(k)
+            const anchorDataKeys = Object.keys(existingDummies[0]).filter(k => 
+                !k.startsWith('_') && k !== idKey && !shouldExcludeFromTooltip(k)
             );
             
             // If anchors have columns that aren't in current dimensions,
@@ -2287,7 +2309,7 @@
                 
                 // Add any values from anchors that aren't in real data (preserved values)
                 existingDummies.forEach(row => {
-                    const val = row[dim.name];
+                    const val = row[dimKey(dim)];
                     if (val !== undefined && val !== '') {
                         realValues.add(val);
                     }
@@ -2296,6 +2318,7 @@
                 const mergedValues = [...realValues].sort();
                 return {
                     name: dim.name,
+                    key: dim.key,
                     uniqueValues: mergedValues,
                     cardinality: mergedValues.length
                 };
@@ -2360,6 +2383,7 @@
         
         function resetAllChanges() {
             if (!originalData) return;
+            if (!confirm('Reset all changes? All your modifications will be reverted and cannot be undone. Are you sure you want to continue?')) return;
             
             // Deep copy original data back to current (dummies stay unchanged)
             currentData = JSON.parse(JSON.stringify(originalData));
@@ -2537,32 +2561,31 @@
 
         function analyzeDimensions(headers, data) {
             const validHeaders = headers.filter((header, idx) => {
-                const headerLower = header.toLowerCase();
+                const parsed = parseColumnPrefix(header);
+                const displayName = parsed ? parsed.displayName : header;
+                const headerLower = displayName.toLowerCase();
                 
-                if (RESERVED_COLUMNS.some(rc => headerLower.includes(rc))) {
-                    return false;
+                if (parsed) {
+                    if (parsed.type === 'dim') return true;
+                    if (parsed.type === 'med' || parsed.type === 'desc' || parsed.type === 'res') return false;
                 }
                 
-                // Exclude media-related columns
-                if (isMediaRelatedColumn(header)) {
-                    return false;
-                }
+                if (RESERVED_COLUMNS.some(rc => headerLower.includes(rc))) return false;
+                if (isMediaRelatedColumn(header)) return false;
+                if (DESC_LIKE_COLUMNS.includes(headerLower)) return false;
                 
                 const values = data.map(row => row[header]);
                 const uniqueCount = new Set(values).size;
-                
-                const isIdColumn = (idx === 0 && headerLower.includes('id')) || 
-                                   uniqueCount === data.length;
-                
+                const isIdColumn = (idx === 0 && headerLower.includes('id')) || uniqueCount === data.length;
                 return !isIdColumn;
             });
             
             const dims = validHeaders.map(header => {
                 const values = data.map(row => row[header]);
                 const uniqueValues = [...new Set(values)].sort();
-                
                 return {
-                    name: header,
+                    name: getDisplayName(header),
+                    key: header,
                     uniqueValues,
                     cardinality: uniqueValues.length
                 };
@@ -2749,29 +2772,29 @@
             const timestamp = new Date().toISOString();
             const undoChanges = [];
             
-            if (encodings.panelX && row[encodings.panelX.name] !== panelXVal) {
-                const oldVal = row[encodings.panelX.name];
-                undoChanges.push({ rowIndex: draggedRowIndex, field: encodings.panelX.name, oldValue: oldVal, newValue: panelXVal });
-                row[encodings.panelX.name] = panelXVal;
-                changeLog.push({ rowId: getRowDisplayId(draggedRowIndex), rowIndex: draggedRowIndex, field: encodings.panelX.name, oldValue: oldVal, newValue: panelXVal, timestamp });
+            if (encodings.panelX && row[dimKey(encodings.panelX)] !== panelXVal) {
+                const oldVal = row[dimKey(encodings.panelX)];
+                undoChanges.push({ rowIndex: draggedRowIndex, field: dimKey(encodings.panelX), oldValue: oldVal, newValue: panelXVal });
+                row[dimKey(encodings.panelX)] = panelXVal;
+                changeLog.push({ rowId: getRowDisplayId(draggedRowIndex), rowIndex: draggedRowIndex, field: dimKey(encodings.panelX), oldValue: oldVal, newValue: panelXVal, timestamp });
             }
-            if (encodings.panelY && row[encodings.panelY.name] !== panelYVal) {
-                const oldVal = row[encodings.panelY.name];
-                undoChanges.push({ rowIndex: draggedRowIndex, field: encodings.panelY.name, oldValue: oldVal, newValue: panelYVal });
-                row[encodings.panelY.name] = panelYVal;
-                changeLog.push({ rowId: getRowDisplayId(draggedRowIndex), rowIndex: draggedRowIndex, field: encodings.panelY.name, oldValue: oldVal, newValue: panelYVal, timestamp });
+            if (encodings.panelY && row[dimKey(encodings.panelY)] !== panelYVal) {
+                const oldVal = row[dimKey(encodings.panelY)];
+                undoChanges.push({ rowIndex: draggedRowIndex, field: dimKey(encodings.panelY), oldValue: oldVal, newValue: panelYVal });
+                row[dimKey(encodings.panelY)] = panelYVal;
+                changeLog.push({ rowId: getRowDisplayId(draggedRowIndex), rowIndex: draggedRowIndex, field: dimKey(encodings.panelY), oldValue: oldVal, newValue: panelYVal, timestamp });
             }
-            if (encodings.innerX && row[encodings.innerX.name] !== innerXVal) {
-                const oldVal = row[encodings.innerX.name];
-                undoChanges.push({ rowIndex: draggedRowIndex, field: encodings.innerX.name, oldValue: oldVal, newValue: innerXVal });
-                row[encodings.innerX.name] = innerXVal;
-                changeLog.push({ rowId: getRowDisplayId(draggedRowIndex), rowIndex: draggedRowIndex, field: encodings.innerX.name, oldValue: oldVal, newValue: innerXVal, timestamp });
+            if (encodings.innerX && row[dimKey(encodings.innerX)] !== innerXVal) {
+                const oldVal = row[dimKey(encodings.innerX)];
+                undoChanges.push({ rowIndex: draggedRowIndex, field: dimKey(encodings.innerX), oldValue: oldVal, newValue: innerXVal });
+                row[dimKey(encodings.innerX)] = innerXVal;
+                changeLog.push({ rowId: getRowDisplayId(draggedRowIndex), rowIndex: draggedRowIndex, field: dimKey(encodings.innerX), oldValue: oldVal, newValue: innerXVal, timestamp });
             }
-            if (encodings.innerY && row[encodings.innerY.name] !== innerYVal) {
-                const oldVal = row[encodings.innerY.name];
-                undoChanges.push({ rowIndex: draggedRowIndex, field: encodings.innerY.name, oldValue: oldVal, newValue: innerYVal });
-                row[encodings.innerY.name] = innerYVal;
-                changeLog.push({ rowId: getRowDisplayId(draggedRowIndex), rowIndex: draggedRowIndex, field: encodings.innerY.name, oldValue: oldVal, newValue: innerYVal, timestamp });
+            if (encodings.innerY && row[dimKey(encodings.innerY)] !== innerYVal) {
+                const oldVal = row[dimKey(encodings.innerY)];
+                undoChanges.push({ rowIndex: draggedRowIndex, field: dimKey(encodings.innerY), oldValue: oldVal, newValue: innerYVal });
+                row[dimKey(encodings.innerY)] = innerYVal;
+                changeLog.push({ rowId: getRowDisplayId(draggedRowIndex), rowIndex: draggedRowIndex, field: dimKey(encodings.innerY), oldValue: oldVal, newValue: innerYVal, timestamp });
             }
             
             if (undoChanges.length > 0) {
@@ -2807,7 +2830,7 @@
             
             // --- Color Section ---
             if (hasColor) {
-                const currentColorValue = row[encodings.color.name];
+                const currentColorValue = row[dimKey(encodings.color)];
                 colorGrid.innerHTML = '';
                 colorGrid.parentElement.querySelector('.context-menu-title').style.display = '';
                 colorGrid.style.display = '';
@@ -2832,7 +2855,7 @@
             
             // --- Shape Section ---
             if (hasShape) {
-                const currentShapeValue = row[encodings.shape.name];
+                const currentShapeValue = row[dimKey(encodings.shape)];
                 shapeDivider.style.display = hasColor ? '' : 'none';
                 shapeSection.style.display = '';
                 shapeGrid.innerHTML = '';
@@ -2884,7 +2907,7 @@
             if (contextMenuRowIndex === null || !encodings.color) return;
             
             const row = currentData[contextMenuRowIndex];
-            const field = encodings.color.name;
+            const field = dimKey(encodings.color);
             const oldValue = row[field];
             
             if (oldValue !== newValue) {
@@ -2908,7 +2931,7 @@
             if (contextMenuRowIndex === null || !encodings.shape) return;
             
             const row = currentData[contextMenuRowIndex];
-            const field = encodings.shape.name;
+            const field = dimKey(encodings.shape);
             const oldValue = row[field];
             
             if (oldValue !== newValue) {
@@ -3277,10 +3300,10 @@
             let panelData = data;
             
             if (encodings.panelX) {
-                panelData = panelData.filter(row => row[encodings.panelX.name] === panelXVal);
+                panelData = panelData.filter(row => row[dimKey(encodings.panelX)] === panelXVal);
             }
             if (encodings.panelY) {
-                panelData = panelData.filter(row => row[encodings.panelY.name] === panelYVal);
+                panelData = panelData.filter(row => row[dimKey(encodings.panelY)] === panelYVal);
             }
             
             const title = document.createElement('div');
@@ -3356,10 +3379,10 @@
             let cellData = panelData;
             
             if (encodings.innerX && allInnerXVals.length > 1) {
-                cellData = cellData.filter(row => row[encodings.innerX.name] === innerXVal);
+                cellData = cellData.filter(row => row[dimKey(encodings.innerX)] === innerXVal);
             }
             if (encodings.innerY && allInnerYVals.length > 1) {
-                cellData = cellData.filter(row => row[encodings.innerY.name] === innerYVal);
+                cellData = cellData.filter(row => row[dimKey(encodings.innerY)] === innerYVal);
             }
             
             // Drop zone setup
@@ -3400,13 +3423,11 @@
                 point.addEventListener('mouseenter', (e) => {
                     const tooltip = document.getElementById('tooltip');
                     const displayFields = Object.keys(row)
-                        .filter(k => !k.startsWith('_') &&
-                                     !isReservedColumn(k) &&
-                                     !isMediaRelatedColumn(k))
+                        .filter(k => !k.startsWith('_') && !shouldExcludeFromTooltip(k))
                         .slice(0, 5);
                     let html = `<div style="color: #888; font-size: 0.7rem; margin-bottom: 4px;">⚓ Anchor Point</div>`;
-                    html += displayFields.map(key =>
-                        `<strong>${displayCol(key)}:</strong> ${row[key]}`
+                    html += displayFields.map(key => 
+                        `<strong>${getDisplayName(key)}:</strong> ${row[key]}`
                     ).join('<br>');
                     html += `<div class="tooltip-hint">Preserves dimension values in export</div>`;
                     tooltip.innerHTML = html;
@@ -3430,14 +3451,14 @@
             
             // Color encoding
             if (encodings.color) {
-                point.style.backgroundColor = getColorForValue(encodings, row[encodings.color.name]);
+                point.style.backgroundColor = getColorForValue(encodings, row[dimKey(encodings.color)]);
             } else {
                 point.style.backgroundColor = COLORS[0];
             }
             
             // Shape encoding
             if (encodings.shape) {
-                const shape = getShapeForValue(encodings, row[encodings.shape.name]);
+                const shape = getShapeForValue(encodings, row[dimKey(encodings.shape)]);
                 point.classList.add(`shape-${shape}`);
             } else {
                 point.classList.add('shape-circle');
@@ -3468,13 +3489,11 @@
             const tooltip = document.getElementById('tooltip');
             
             const displayFields = Object.keys(row)
-                .filter(k => !k.startsWith('_') &&
-                             !isReservedColumn(k) &&
-                             !isMediaRelatedColumn(k))
+                .filter(k => !k.startsWith('_') && !shouldExcludeFromTooltip(k))
                 .slice(0, 5);
-
-            let html = displayFields.map(key =>
-                `<strong>${displayCol(key)}:</strong> ${row[key]}`
+            
+            let html = displayFields.map(key => 
+                `<strong>${getDisplayName(key)}:</strong> ${row[key]}`
             ).join('<br>');
             
             if (isModified) {
@@ -3521,27 +3540,24 @@
             const modalBody = document.getElementById('modalBody');
             const modalTitle = document.getElementById('modalTitle');
             
-            const resCol = csvHeaders && csvHeaders.find(h => getColumnPrefix(h) === 'res');
-            const titleField = (resCol && row[resCol]) || row.title || row.name || row.Name || row.Title || `Record #${row._index + 1}`;
-            modalTitle.textContent = titleField;
-
+            modalTitle.textContent = getModalTitleFromRow(row);
+            
             let tableHTML = '<table class="data-table">';
 
             Object.keys(row).forEach(key => {
                 if (key.startsWith('_')) return;
-                if (isReservedColumn(key)) return;
-                if (isMediaRelatedColumn(key)) return;
-
+                if (shouldExcludeFromModalTable(key)) return;
+                
                 let valueHTML = row[key];
-
-                if (encodings.color && key === encodings.color.name) {
+                
+                if (encodings.color && key === dimKey(encodings.color)) {
                     const color = getColorForValue(encodings, row[key]);
                     valueHTML = `<span class="data-tag" style="background: ${color}33; color: ${color}">${row[key]}</span>`;
                 }
 
                 tableHTML += `
                     <tr>
-                        <td>${displayCol(key)}</td>
+                        <td>${getDisplayName(key)}</td>
                         <td>${valueHTML}</td>
                     </tr>
                 `;

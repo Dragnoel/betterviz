@@ -1706,7 +1706,33 @@
         ];
         
         const RESERVED_COLUMNS = ['description', 'title', 'name'];
-        
+
+        // Explicit column prefix conventions (checked before heuristics)
+        const COLUMN_PREFIXES = { dim: 'dim::', desc: 'desc::', res: 'res::', med: 'med::' };
+
+        function getColumnPrefix(header) {
+            for (const [type, prefix] of Object.entries(COLUMN_PREFIXES)) {
+                if (header.startsWith(prefix)) return type;
+            }
+            return null;
+        }
+
+        function stripPrefix(header) {
+            for (const prefix of Object.values(COLUMN_PREFIXES)) {
+                if (header.startsWith(prefix)) return header.slice(prefix.length);
+            }
+            return header;
+        }
+
+        function hasPrefixedColumns(headers) {
+            return headers.some(h => getColumnPrefix(h) !== null);
+        }
+
+        // Returns display name: strips prefix if present, otherwise returns as-is
+        function displayCol(header) {
+            return stripPrefix(header);
+        }
+
         // Media column detection patterns
         const MEDIA_URL_PATTERNS = [
             /^(audio|image|img|photo|picture|video|media|thumbnail|thumb|poster|clip|sound|track)[-_]?(url|file|src|path|link|href)$/i,
@@ -1914,14 +1940,32 @@
         }
         
         function isMediaRelatedColumn(headerName) {
+            if (getColumnPrefix(headerName) === 'med') return true;
             return isMediaUrlColumn(headerName) || isMediaMetaColumn(headerName);
         }
-        
+
+        function isReservedColumn(headerName) {
+            if (getColumnPrefix(headerName) === 'res') return true;
+            return RESERVED_COLUMNS.some(rc => headerName.toLowerCase().includes(rc));
+        }
+
+        function isDescColumn(headerName) {
+            return getColumnPrefix(headerName) === 'desc';
+        }
+
         function detectMediaColumns(headers) {
             const cols = [];
             headers.forEach(h => {
-                if (isMediaUrlColumn(h)) {
-                    // Infer type from column name
+                if (getColumnPrefix(h) === 'med') {
+                    // Explicit med:: prefix — infer type from stripped name
+                    const lower = stripPrefix(h).toLowerCase();
+                    let detectedType = 'auto';
+                    for (const [fragment, type] of Object.entries(MEDIA_TYPE_HINTS)) {
+                        if (lower.includes(fragment)) { detectedType = type; break; }
+                    }
+                    cols.push({ column: h, type: detectedType });
+                } else if (isMediaUrlColumn(h)) {
+                    // Heuristic fallback — infer type from full column name
                     const lower = h.toLowerCase();
                     let detectedType = 'auto';
                     for (const [fragment, type] of Object.entries(MEDIA_TYPE_HINTS)) {
@@ -2194,10 +2238,10 @@
             // 3. Check anchors don't reference dimension columns that no longer exist
             const dimNames = new Set(dimensions.map(d => d.name));
             const idKey = headers[0];
-            const anchorDataKeys = Object.keys(existingDummies[0]).filter(k => 
-                !k.startsWith('_') && 
-                k !== idKey && 
-                !RESERVED_COLUMNS.some(rc => k.toLowerCase().includes(rc)) &&
+            const anchorDataKeys = Object.keys(existingDummies[0]).filter(k =>
+                !k.startsWith('_') &&
+                k !== idKey &&
+                !isReservedColumn(k) &&
                 !isMediaRelatedColumn(k)
             );
             
@@ -2460,6 +2504,23 @@
         // ============================================================
         // DIMENSION ANALYSIS
         // ============================================================
+        function analyzeDimensionsFromPrefixes(headers, data) {
+            const dims = [];
+            headers.forEach(header => {
+                if (getColumnPrefix(header) !== 'dim') return;
+                const values = data.map(row => row[header]);
+                const uniqueValues = [...new Set(values)].sort();
+                dims.push({
+                    name: header,
+                    displayName: stripPrefix(header),
+                    uniqueValues,
+                    cardinality: uniqueValues.length
+                });
+            });
+            dims.sort((a, b) => b.cardinality - a.cardinality);
+            return dims;
+        }
+
         function analyzeDimensions(headers, data) {
             const validHeaders = headers.filter((header, idx) => {
                 const headerLower = header.toLowerCase();
@@ -3325,13 +3386,13 @@
                 point.addEventListener('mouseenter', (e) => {
                     const tooltip = document.getElementById('tooltip');
                     const displayFields = Object.keys(row)
-                        .filter(k => !k.startsWith('_') && 
-                                     !RESERVED_COLUMNS.includes(k.toLowerCase()) &&
+                        .filter(k => !k.startsWith('_') &&
+                                     !isReservedColumn(k) &&
                                      !isMediaRelatedColumn(k))
                         .slice(0, 5);
                     let html = `<div style="color: #888; font-size: 0.7rem; margin-bottom: 4px;">⚓ Anchor Point</div>`;
-                    html += displayFields.map(key => 
-                        `<strong>${key}:</strong> ${row[key]}`
+                    html += displayFields.map(key =>
+                        `<strong>${displayCol(key)}:</strong> ${row[key]}`
                     ).join('<br>');
                     html += `<div class="tooltip-hint">Preserves dimension values in export</div>`;
                     tooltip.innerHTML = html;
@@ -3393,13 +3454,13 @@
             const tooltip = document.getElementById('tooltip');
             
             const displayFields = Object.keys(row)
-                .filter(k => !k.startsWith('_') && 
-                             !RESERVED_COLUMNS.includes(k.toLowerCase()) &&
+                .filter(k => !k.startsWith('_') &&
+                             !isReservedColumn(k) &&
                              !isMediaRelatedColumn(k))
                 .slice(0, 5);
-            
-            let html = displayFields.map(key => 
-                `<strong>${key}:</strong> ${row[key]}`
+
+            let html = displayFields.map(key =>
+                `<strong>${displayCol(key)}:</strong> ${row[key]}`
             ).join('<br>');
             
             if (isModified) {
@@ -3446,26 +3507,27 @@
             const modalBody = document.getElementById('modalBody');
             const modalTitle = document.getElementById('modalTitle');
             
-            const titleField = row.title || row.name || row.Name || row.Title || `Record #${row._index + 1}`;
+            const resCol = csvHeaders && csvHeaders.find(h => getColumnPrefix(h) === 'res');
+            const titleField = (resCol && row[resCol]) || row.title || row.name || row.Name || row.Title || `Record #${row._index + 1}`;
             modalTitle.textContent = titleField;
-            
+
             let tableHTML = '<table class="data-table">';
-            
+
             Object.keys(row).forEach(key => {
                 if (key.startsWith('_')) return;
-                if (RESERVED_COLUMNS.some(rc => key.toLowerCase() === rc)) return;
+                if (isReservedColumn(key)) return;
                 if (isMediaRelatedColumn(key)) return;
-                
+
                 let valueHTML = row[key];
-                
+
                 if (encodings.color && key === encodings.color.name) {
                     const color = getColorForValue(encodings, row[key]);
                     valueHTML = `<span class="data-tag" style="background: ${color}33; color: ${color}">${row[key]}</span>`;
                 }
-                
+
                 tableHTML += `
                     <tr>
-                        <td>${key}</td>
+                        <td>${displayCol(key)}</td>
                         <td>${valueHTML}</td>
                     </tr>
                 `;
@@ -3562,7 +3624,10 @@
             const { realData, existingDummies } = detectExistingDummies(data, headers);
             
             // Analyze dimensions from REAL data first
-            const realDimensions = analyzeDimensions(headers, realData);
+            // Use explicit prefix conventions if present, otherwise fall back to heuristics
+            const realDimensions = hasPrefixedColumns(headers)
+                ? analyzeDimensionsFromPrefixes(headers, realData)
+                : analyzeDimensions(headers, realData);
             
             // Merge value spaces: real data values + any preserved values in existing anchors
             const mergedDimensions = existingDummies.length > 0

@@ -1968,7 +1968,16 @@
             if (parsed && parsed.type === 'med') return true;
             return isMediaUrlColumn(headerName) || isMediaMetaColumn(headerName);
         }
-        
+
+        function isReservedColumn(headerName) {
+            if (getColumnPrefix(headerName) === 'res') return true;
+            return RESERVED_COLUMNS.some(rc => headerName.toLowerCase().includes(rc));
+        }
+
+        function isDescColumn(headerName) {
+            return getColumnPrefix(headerName) === 'desc';
+        }
+
         function detectMediaColumns(headers) {
             const cols = [];
             headers.forEach(h => {
@@ -2520,6 +2529,23 @@
         // ============================================================
         // DIMENSION ANALYSIS
         // ============================================================
+        function analyzeDimensionsFromPrefixes(headers, data) {
+            const dims = [];
+            headers.forEach(header => {
+                if (getColumnPrefix(header) !== 'dim') return;
+                const values = data.map(row => row[header]);
+                const uniqueValues = [...new Set(values)].sort();
+                dims.push({
+                    name: header,
+                    displayName: stripPrefix(header),
+                    uniqueValues,
+                    cardinality: uniqueValues.length
+                });
+            });
+            dims.sort((a, b) => b.cardinality - a.cardinality);
+            return dims;
+        }
+
         function analyzeDimensions(headers, data) {
             const validHeaders = headers.filter((header, idx) => {
                 const parsed = parseColumnPrefix(header);
@@ -3506,7 +3532,7 @@
             modalTitle.textContent = getModalTitleFromRow(row);
             
             let tableHTML = '<table class="data-table">';
-            
+
             Object.keys(row).forEach(key => {
                 if (key.startsWith('_')) return;
                 if (shouldExcludeFromModalTable(key)) return;
@@ -3517,7 +3543,7 @@
                     const color = getColorForValue(encodings, row[key]);
                     valueHTML = `<span class="data-tag" style="background: ${color}33; color: ${color}">${row[key]}</span>`;
                 }
-                
+
                 tableHTML += `
                     <tr>
                         <td>${getDisplayName(key)}</td>
@@ -3617,7 +3643,10 @@
             const { realData, existingDummies } = detectExistingDummies(data, headers);
             
             // Analyze dimensions from REAL data first
-            const realDimensions = analyzeDimensions(headers, realData);
+            // Use explicit prefix conventions if present, otherwise fall back to heuristics
+            const realDimensions = hasPrefixedColumns(headers)
+                ? analyzeDimensionsFromPrefixes(headers, realData)
+                : analyzeDimensions(headers, realData);
             
             // Merge value spaces: real data values + any preserved values in existing anchors
             const mergedDimensions = existingDummies.length > 0

@@ -1700,6 +1700,11 @@
     </div>
     
     <script>
+        // Hugo site base URL, injected at build time.
+        // Used to resolve site-root-relative media paths (/kourosh/file.wav)
+        // against the correct server regardless of where this page is hosted.
+        const SITE_BASE_URL = {{ .Site.BaseURL | jsonify }};
+
         // ============================================================
         // CONFIGURATION
         // ============================================================
@@ -2035,12 +2040,17 @@
             if (!url) return url;
             url = url.trim();
             if (!url) return url;
-            // Already absolute or special scheme
+            // Already absolute or special scheme — use as-is
             if (/^(https?:)?\/\//i.test(url) || url.startsWith('data:') || url.startsWith('blob:')) return url;
-            // Site-root-relative (e.g. /kourosh/file.wav) → prepend origin
-            if (url.startsWith('/')) return window.location.origin + url;
-            // Relative path → resolve against the CSV's directory
-            const base = csvBaseUrl || window.location.href;
+            // Site-root-relative (e.g. /kourosh/file.wav):
+            // Prefer Hugo's base URL so paths resolve to the actual media server
+            // even when this page is viewed from a different origin (e.g. GitHub).
+            if (url.startsWith('/')) {
+                const base = (SITE_BASE_URL || window.location.origin).replace(/\/$/, '');
+                return base + url;
+            }
+            // Relative path → resolve against the CSV's source directory
+            const base = csvBaseUrl || SITE_BASE_URL || window.location.href;
             try {
                 return new URL(url, base).href;
             } catch(e) {
@@ -3684,7 +3694,7 @@
                 const droppedUrl = e.dataTransfer.getData('text/uri-list') || '';
                 const baseUrl = (droppedUrl && /^https?:\/\//i.test(droppedUrl))
                     ? droppedUrl.substring(0, droppedUrl.lastIndexOf('/') + 1)
-                    : window.location.origin + '/';
+                    : (SITE_BASE_URL || window.location.origin + '/');
                 loadFile(file, baseUrl);
             }
         });
@@ -3692,15 +3702,15 @@
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) {
-                // Local file picker: resolve media relative to the site root
-                loadFile(file, window.location.origin + '/');
+                loadFile(file, SITE_BASE_URL || window.location.origin + '/');
             }
         });
 
         // baseUrl: the directory URL the CSV came from, used to resolve relative media paths.
-        // For local file uploads this defaults to the site origin so /path/file.ext works.
+        // For local file uploads this defaults to the Hugo site base URL so relative
+        // paths resolve to the correct media server regardless of where this page is hosted.
         function loadFile(file, baseUrl) {
-            csvBaseUrl = baseUrl || window.location.origin + '/';
+            csvBaseUrl = baseUrl || SITE_BASE_URL || window.location.origin + '/';
             const reader = new FileReader();
             reader.onload = (e) => {
                 processCSV(e.target.result);
@@ -3779,7 +3789,7 @@
         // SAMPLE DATA
         // ============================================================
         function loadSampleData() {
-            csvBaseUrl = window.location.origin + '/';
+            csvBaseUrl = SITE_BASE_URL || window.location.origin + '/';
             const sampleCSV = `ID,Function,Intonation,Focus,Canonical,Surprise,audio_url
 1,Genuine,Rising,0,0,0,/kourosh/01_00_10_Genuine.wav
 2,Offer,Rising,0,0,0,/kourosh/01_00_2_Offer.wav

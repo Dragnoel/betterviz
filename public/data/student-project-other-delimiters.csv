@@ -1,0 +1,7 @@
+ID | Student | Role | Contribution_Type | Energy_Level | Phase | On_Topic | Disagreement
+1 | Alex | Leader | Proposal | High | Brainstorm | 1 | 0
+2 | Jamie | Researcher | Question | Medium | Brainstorm | 1 | 0
+3 | Sam | Skeptic | Critique | High | Brainstorm | 1 | 1
+4 | Morgan | Contributor | Agreement | Low | Brainstorm | 1 | 0
+5 | Riley | Passive | Tangent | Low | Brainstorm | 0 | 0
+6 | Alex | Leader | Action_Item | High | Planning | 1 | 0

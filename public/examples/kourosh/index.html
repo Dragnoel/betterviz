@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Linguistics: Question Intonation - BetterViz</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -1615,6 +1616,10 @@
                     <span class="icon">📥</span>
                     <span>Download</span>
                 </button>
+                <button class="floating-btn" onclick="downloadSnapshot()">
+                    <span class="icon">📷</span>
+                    <span>Snapshot</span>
+                </button>
             </div>
             
             
@@ -1631,6 +1636,7 @@
                 </div>
                 <div class="viz-actions">
                     <button class="btn btn-success btn-small" onclick="downloadCSV()">📥 Download CSV</button>
+                    <button class="btn btn-secondary btn-small" onclick="downloadSnapshot()">📷 Snapshot</button>
                 </div>
             </div>
             
@@ -1861,11 +1867,14 @@
         
         
         function parseCSV(text) {
-            const lines = text.trim().split('\n');
-            const headers = lines[0].split(',').map(h => h.trim());
+            const lines = text.trim().split('\n').map(line => line.replace(/\r$/, ''));
+            if (lines.length === 0) return { headers: [], data: [] };
+            
+            const delimiter = detectDelimiter(lines);
+            const headers = parseDelimitedLine(lines[0], delimiter).map(h => h.trim());
             
             const data = lines.slice(1).map((line, idx) => {
-                const values = parseCSVLine(line);
+                const values = parseDelimitedLine(line, delimiter);
                 const row = { _index: idx };
                 headers.forEach((header, i) => {
                     row[header] = values[i]?.trim() ?? '';
@@ -1876,16 +1885,33 @@
             return { headers, data };
         }
         
-        function parseCSVLine(line) {
+        function detectDelimiter(lines) {
+            const candidates = [',', '\t', ';', '|'];
+            const sampleLine = lines.find(line => line.trim().length > 0) || '';
+            let best = candidates[0];
+            let bestCount = -1;
+            candidates.forEach((delimiter) => {
+                let count = 0;
+                let inQuotes = false;
+                for (let i = 0; i < sampleLine.length; i++) {
+                    const char = sampleLine[i];
+                    if (char === '"') inQuotes = !inQuotes;
+                    else if (char === delimiter && !inQuotes) count++;
+                }
+                if (count > bestCount) { best = delimiter; bestCount = count; }
+            });
+            return best;
+        }
+        
+        function parseDelimitedLine(line, delimiter) {
             const result = [];
             let current = '';
             let inQuotes = false;
-            
             for (let i = 0; i < line.length; i++) {
                 const char = line[i];
                 if (char === '"') {
                     inQuotes = !inQuotes;
-                } else if (char === ',' && !inQuotes) {
+                } else if (char === delimiter && !inQuotes) {
                     result.push(current);
                     current = '';
                 } else {
@@ -1932,6 +1958,29 @@
             });
             
             return csv;
+        }
+        
+        function downloadSnapshot() {
+            const el = document.getElementById('vizContainer');
+            const panelGrid = el.querySelector('.panel-grid');
+            if (!panelGrid) {
+                alert('No visualization to capture');
+                return;
+            }
+            if (typeof html2canvas === 'undefined') {
+                alert('Snapshot requires html2canvas. Please check your connection.');
+                return;
+            }
+            html2canvas(panelGrid, { backgroundColor: '#0f1419', scale: 2 }).then(canvas => {
+                canvas.toBlob(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = 'grid_snapshot.png';
+                    link.click();
+                    URL.revokeObjectURL(url);
+                }, 'image/png');
+            });
         }
         
         function downloadCSV() {
@@ -3619,6 +3668,9 @@
             document.querySelectorAll('video, audio').forEach(el => {
                 el.pause();
                 el.currentTime = 0;
+            });
+            document.querySelectorAll('#modalOverlay iframe[src*="youtube"], #modalOverlay iframe[src*="youtu.be"]').forEach(iframe => {
+                iframe.src = '';
             });
         }
         

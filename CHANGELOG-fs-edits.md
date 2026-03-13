@@ -96,3 +96,40 @@ Log of changes made:
 - User must confirm with "OK" to revert; "Cancel" aborts and keeps changes
 
 **Behavior:** Clicking "Reset All" now shows a popup: "Reset all changes? All your modifications will be reverted and cannot be undone. Are you sure you want to continue?" This prevents accidental loss of work.
+
+---
+
+## Change 8: Support multiple delimiters (tab, semicolon, pipe)
+
+**Files modified:** `layouts/index.html`, `layouts/_default/example-viz.html`, `layouts/shortcodes/visualizer-test.html`, `layouts/_default/full-visualizer.txt`, `tools/local-visualizer.html`, `public/examples/*/index.html`
+
+**Changes:**
+- Added `detectDelimiter(lines)` – scans the first non-empty line and picks the delimiter with the highest count outside quotes; candidates: `,`, `\t`, `;`, `|`
+- Replaced `parseCSVLine(line)` with `parseDelimitedLine(line, delimiter)` – parses using the given delimiter instead of hardcoded comma
+- Updated `parseCSV(text)` to detect delimiter first, then parse all lines with it; handles empty input; normalizes line endings (`\r\n` → `\n`)
+
+**Behavior:** Uploaded files can use comma, tab, semicolon, or pipe as the field separator. The app auto-detects from the header row. Export still uses comma-separated format.
+
+---
+
+## Change 9: Stop YouTube/video playback when modal closes
+
+**Files modified:** `layouts/index.html`, `layouts/_default/example-viz.html`, `layouts/shortcodes/visualizer-test.html`, `layouts/_default/full-visualizer.txt`, `tools/local-visualizer.html`, `public/examples/*/index.html`
+
+**Changes:**
+- In `closeModal()`, added logic to clear the `src` of any YouTube iframes inside the modal, in addition to pausing `video` and `audio` elements
+
+**Behavior:** Closing the record modal no longer leaves YouTube or other embedded videos playing in the background. Video and audio playback stops when the modal is closed.
+
+---
+
+## Change 10: Save grid snapshot as PNG
+
+**Files modified:** `layouts/index.html`, `layouts/_default/example-viz.html`, `layouts/shortcodes/visualizer-test.html`, `layouts/_default/full-visualizer.txt`, `tools/local-visualizer.html`
+
+**Changes:**
+- Added html2canvas (CDN) for DOM-to-image capture
+- Added "Snapshot" button in viz-actions and floating controls
+- Added `downloadSnapshot()` – captures the panel grid as PNG and triggers download
+
+**Behavior:** Users can save a snapshot of the current grid visualization as a PNG image. Works in both edit and view modes. Requires network for html2canvas CDN on first use.

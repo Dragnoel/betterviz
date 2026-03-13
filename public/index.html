@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Multi-Dimensional Data Visualizer - Full Editor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -269,6 +270,18 @@
         
         .file-input {
             display: none;
+        }
+
+        #mediaFolderBtn {
+            display: none;
+            width: 100%;
+            margin-bottom: 8px;
+            font-size: 0.75rem;
+            padding: 6px 10px;
+        }
+        #mediaFolderBtn.media-folder-loaded {
+            border-color: #6bcb77;
+            color: #6bcb77;
         }
         
         .btn {
@@ -1495,9 +1508,11 @@
                     <div class="section-title">Data Input</div>
                     <div class="file-drop" id="fileDrop">
                         <div class="file-drop-icon">📁</div>
-                        <div class="file-drop-text">Drop CSV here or click</div>
-                        <input type="file" class="file-input" id="fileInput" accept=".csv">
+                        <div class="file-drop-text">Drop CSV + media files (or folder) here, or click</div>
+                        <input type="file" class="file-input" id="fileInput" multiple accept=".csv,.wav,.mp3,.ogg,.flac,.aac,.m4a,.opus,.webm,.mp4,.ogv,.mov,.avi,.mkv,.jpg,.jpeg,.png,.gif,.webp,.svg">
                     </div>
+                    <input type="file" class="file-input" id="mediaFolderInput" multiple>
+                    <button class="btn btn-secondary" id="mediaFolderBtn" onclick="loadMediaFolder(null)">Load media files…</button>
                     <button class="btn btn-secondary" onclick="loadSampleData()">Load Sample Data</button>
                     <div class="sample-data-info">Linguistics dataset with audio (audio_url column)</div>
                 </div>
@@ -1631,6 +1646,10 @@
                     <span class="icon">📥</span>
                     <span>Download</span>
                 </button>
+                <button class="floating-btn" onclick="downloadSnapshot()">
+                    <span class="icon">📷</span>
+                    <span>Snapshot</span>
+                </button>
             </div>
             
             
@@ -1647,6 +1666,7 @@
                 </div>
                 <div class="viz-actions">
                     <button class="btn btn-success btn-small" onclick="downloadCSV()">📥 Download CSV</button>
+                    <button class="btn btn-secondary btn-small" onclick="downloadSnapshot()">📷 Snapshot</button>
                 </div>
             </div>
             
@@ -1802,6 +1822,8 @@
         let changeLog = [];
         let csvHeaders = [];
         let mediaColumns = [];
+        let csvBaseUrl = '';  
+        let localMediaMap = {};  
         
         
         let dummyRows = [];
@@ -1876,11 +1898,14 @@
         
         
         function parseCSV(text) {
-            const lines = text.trim().split('\n');
-            const headers = lines[0].split(',').map(h => h.trim());
+            const lines = text.trim().split('\n').map(line => line.replace(/\r$/, ''));
+            if (lines.length === 0) return { headers: [], data: [] };
+            
+            const delimiter = detectDelimiter(lines);
+            const headers = parseDelimitedLine(lines[0], delimiter).map(h => h.trim());
             
             const data = lines.slice(1).map((line, idx) => {
-                const values = parseCSVLine(line);
+                const values = parseDelimitedLine(line, delimiter);
                 const row = { _index: idx };
                 headers.forEach((header, i) => {
                     row[header] = values[i]?.trim() ?? '';
@@ -1891,16 +1916,33 @@
             return { headers, data };
         }
         
-        function parseCSVLine(line) {
+        function detectDelimiter(lines) {
+            const candidates = [',', '\t', ';', '|'];
+            const sampleLine = lines.find(line => line.trim().length > 0) || '';
+            let best = candidates[0];
+            let bestCount = -1;
+            candidates.forEach((delimiter) => {
+                let count = 0;
+                let inQuotes = false;
+                for (let i = 0; i < sampleLine.length; i++) {
+                    const char = sampleLine[i];
+                    if (char === '"') inQuotes = !inQuotes;
+                    else if (char === delimiter && !inQuotes) count++;
+                }
+                if (count > bestCount) { best = delimiter; bestCount = count; }
+            });
+            return best;
+        }
+        
+        function parseDelimitedLine(line, delimiter) {
             const result = [];
             let current = '';
             let inQuotes = false;
-            
             for (let i = 0; i < line.length; i++) {
                 const char = line[i];
                 if (char === '"') {
                     inQuotes = !inQuotes;
-                } else if (char === ',' && !inQuotes) {
+                } else if (char === delimiter && !inQuotes) {
                     result.push(current);
                     current = '';
                 } else {
@@ -1947,6 +1989,29 @@
             });
             
             return csv;
+        }
+        
+        function downloadSnapshot() {
+            const el = document.getElementById('vizContainer');
+            const panelGrid = el.querySelector('.panel-grid');
+            if (!panelGrid) {
+                alert('No visualization to capture');
+                return;
+            }
+            if (typeof html2canvas === 'undefined') {
+                alert('Snapshot requires html2canvas. Please check your connection.');
+                return;
+            }
+            html2canvas(panelGrid, { backgroundColor: '#0f1419', scale: 2 }).then(canvas => {
+                canvas.toBlob(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = 'grid_snapshot.png';
+                    link.click();
+                    URL.revokeObjectURL(url);
+                }, 'image/png');
+            });
         }
         
         function downloadCSV() {
@@ -2025,7 +2090,35 @@
             if (/\.(mp3|wav|ogg|flac|aac|m4a|wma)(\?|$)/i.test(lower)) return 'audio';
             return 'unknown';
         }
+
         
+        
+        
+        
+        
+        
+        function resolveMediaUrl(url) {
+            if (!url) return url;
+            url = url.trim();
+            if (!url) return url;
+            
+            if (/^(https?:)?\/\//i.test(url) || url.startsWith('data:') || url.startsWith('blob:')) return url;
+            
+            
+            if (localMediaMap[url]) return localMediaMap[url];
+            const basename = url.split(/[/\\]/).pop();
+            if (basename && localMediaMap[basename]) return localMediaMap[basename];
+            
+            if (url.startsWith('/')) return url;
+            
+            if (csvBaseUrl) {
+                try {
+                    return new URL(url, csvBaseUrl).href;
+                } catch(e) {}
+            }
+            return url;
+        }
+
         function getRowMedia(row) {
             
             const media = [];
@@ -2041,14 +2134,14 @@
                 }
                 
                 const baseLabel = getDisplayName(mc.column).replace(/[-_](url|file|src|path|link|href)$/i, '').replace(/[-_]/g, ' ');
-                media.push({ type: type, url: url.trim(), label: baseLabel || 'media' });
+                media.push({ type: type, url: resolveMediaUrl(url.trim()), label: baseLabel || 'media' });
             });
-            
+
             
             if (row.media_type && row.media_url && !mediaColumns.some(mc => mc.column === 'media_url')) {
                 media.push({
                     type: row.media_type,
-                    url: row.media_url.trim(),
+                    url: resolveMediaUrl(row.media_url.trim()),
                     label: row.media_type
                 });
             }
@@ -3632,6 +3725,9 @@
                 el.pause();
                 el.currentTime = 0;
             });
+            document.querySelectorAll('#modalOverlay iframe[src*="youtube"], #modalOverlay iframe[src*="youtu.be"]').forEach(iframe => {
+                iframe.src = '';
+            });
         }
         
         
@@ -3651,24 +3747,58 @@
             fileDrop.classList.remove('dragover');
         });
         
-        fileDrop.addEventListener('drop', (e) => {
+        fileDrop.addEventListener('drop', async (e) => {
             e.preventDefault();
             fileDrop.classList.remove('dragover');
+
             
-            const file = e.dataTransfer.files[0];
-            if (file && file.name.endsWith('.csv')) {
-                loadFile(file);
+            if (e.dataTransfer.items && window.FileSystemDirectoryHandle) {
+                for (const item of e.dataTransfer.items) {
+                    if (item.kind === 'file' && typeof item.getAsFileSystemHandle === 'function') {
+                        const handle = await item.getAsFileSystemHandle();
+                        if (handle && handle.kind === 'directory') {
+                            loadMediaFolder(handle);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            const files = e.dataTransfer.files;
+            if (files.length > 1) {
+                
+                handleMixedFiles(files);
+            } else if (files.length === 1 && files[0].name.endsWith('.csv')) {
+                
+                const droppedUrl = e.dataTransfer.getData('text/uri-list') || '';
+                const baseUrl = (droppedUrl && /^https?:\/\//i.test(droppedUrl))
+                    ? droppedUrl.substring(0, droppedUrl.lastIndexOf('/') + 1)
+                    : '';
+                loadFile(files[0], baseUrl);
             }
         });
         
         fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                loadFile(file);
+            const files = e.target.files;
+            if (files.length > 1) {
+                handleMixedFiles(files);
+            } else if (files.length === 1) {
+                loadFile(files[0], '');
+            }
+            e.target.value = '';
+        });
+
+        document.getElementById('mediaFolderInput').addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                loadMediaFilesFromInput(e.target.files);
+                e.target.value = '';  
             }
         });
+
         
-        function loadFile(file) {
+        
+        function loadFile(file, baseUrl) {
+            csvBaseUrl = baseUrl || '';
             const reader = new FileReader();
             reader.onload = (e) => {
                 processCSV(e.target.result);
@@ -3676,10 +3806,106 @@
             reader.readAsText(file);
         }
         
+        const MEDIA_EXTENSIONS = new Set([
+            'wav','mp3','ogg','flac','aac','m4a','opus','webm',
+            'mp4','webm','ogv','mov','avi','mkv',
+            'jpg','jpeg','png','gif','webp','svg'
+        ]);
+
+        function clearLocalMediaMap() {
+            
+            for (const url of Object.values(localMediaMap)) {
+                if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+            }
+            localMediaMap = {};
+        }
+
+        async function scanDirForMedia(dirHandle, prefix) {
+            for await (const [name, handle] of dirHandle.entries()) {
+                const relPath = prefix ? `${prefix}/${name}` : name;
+                if (handle.kind === 'file') {
+                    const ext = name.split('.').pop().toLowerCase();
+                    if (MEDIA_EXTENSIONS.has(ext)) {
+                        const file = await handle.getFile();
+                        const blobUrl = URL.createObjectURL(file);
+                        localMediaMap[name] = blobUrl;      
+                        localMediaMap[relPath] = blobUrl;   
+                    }
+                } else if (handle.kind === 'directory') {
+                    await scanDirForMedia(handle, relPath);
+                }
+            }
+        }
+
+        function loadMediaFilesFromInput(fileList) {
+            clearLocalMediaMap();
+            let count = 0;
+            for (const file of fileList) {
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (MEDIA_EXTENSIONS.has(ext)) {
+                    const blobUrl = URL.createObjectURL(file);
+                    localMediaMap[file.name] = blobUrl;  
+                    if (file.webkitRelativePath) {
+                        localMediaMap[file.webkitRelativePath] = blobUrl;
+                    }
+                    count++;
+                }
+            }
+            updateMediaFolderButton(count);
+        }
+
+        
+        
+        function handleMixedFiles(fileList) {
+            let csvFile = null;
+            clearLocalMediaMap();
+            let mediaCount = 0;
+            for (const file of fileList) {
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (file.name.toLowerCase().endsWith('.csv') && !csvFile) {
+                    csvFile = file;
+                } else if (MEDIA_EXTENSIONS.has(ext)) {
+                    const blobUrl = URL.createObjectURL(file);
+                    localMediaMap[file.name] = blobUrl;
+                    if (file.webkitRelativePath) localMediaMap[file.webkitRelativePath] = blobUrl;
+                    mediaCount++;
+                }
+            }
+            if (mediaCount > 0) updateMediaFolderButton(mediaCount);
+            if (csvFile) loadFile(csvFile, '');
+        }
+
+        async function loadMediaFolder(dirHandle) {
+            if (dirHandle) {
+                
+                clearLocalMediaMap();
+                const btn = document.getElementById('mediaFolderBtn');
+                if (btn) btn.textContent = 'Scanning…';
+                await scanDirForMedia(dirHandle, '');
+                const count = Object.keys(localMediaMap).length / 2 | 0;
+                updateMediaFolderButton(count);
+            } else {
+                
+                document.getElementById('mediaFolderInput').click();
+            }
+        }
+
+        function updateMediaFolderButton(fileCount) {
+            const btn = document.getElementById('mediaFolderBtn');
+            if (!btn) return;
+            if (fileCount > 0) {
+                btn.textContent = `Media folder: ${fileCount} file${fileCount !== 1 ? 's' : ''} loaded`;
+                btn.classList.add('media-folder-loaded');
+            } else {
+                btn.textContent = 'Load media folder…';
+                btn.classList.remove('media-folder-loaded');
+            }
+        }
+
         function processCSV(text) {
             const { headers, data } = parseCSV(text);
             csvHeaders = headers;
-            
+
             
             mediaColumns = detectMediaColumns(headers);
             console.log('Detected media columns:', mediaColumns);
@@ -3741,12 +3967,26 @@
             updateChangeLogUI();
             updateUndoRedoUI();
             updateVisualization();
+
+            
+            
+            const mediaBtn = document.getElementById('mediaFolderBtn');
+            if (mediaBtn) {
+                if (mediaColumns.length > 0 && !csvBaseUrl) {
+                    mediaBtn.style.display = '';
+                    
+                    if (Object.keys(localMediaMap).length === 0) updateMediaFolderButton(0);
+                } else {
+                    mediaBtn.style.display = 'none';
+                }
+            }
         }
         
         
         
         
         function loadSampleData() {
+            csvBaseUrl = '';
             const sampleCSV = `ID,Function,Intonation,Focus,Canonical,Surprise,audio_url
 1,Genuine,Rising,0,0,0,/kourosh/01_00_10_Genuine.wav
 2,Offer,Rising,0,0,0,/kourosh/01_00_2_Offer.wav

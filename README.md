@@ -4,6 +4,9 @@ Interactive multi-dimensional data visualizer. Load CSV data, map dimensions to 
 
 ## Quick start
 
+0. For local, offline option, download tools/local-visualizer.html to your computer. Open using a browser, load your CSV and media files (keep in the same folder for convenience). Interact.
+
+For online or server type:
 1. **Get the repo** — `git clone https://github.com/Dragnoel/betterviz` (or [download](https://github.com/Dragnoel/betterviz))
 2. **Install Hugo Extended** — Windows: `winget install Hugo.Hugo.Extended`; macOS: `brew install hugo` (or [download](https://github.com/gohugoio/hugo/releases))
 3. **Open a terminal** in the project folder and run:

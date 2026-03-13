@@ -3769,7 +3769,6 @@
         function processCSV(text) {
             const { headers, data } = parseCSV(text);
             csvHeaders = headers;
-            clearLocalMediaMap();
 
             // Detect media columns from headers
             mediaColumns = detectMediaColumns(headers);

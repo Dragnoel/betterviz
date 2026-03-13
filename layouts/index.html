@@ -3852,7 +3852,6 @@
         function processCSV(text) {
             const { headers, data } = parseCSV(text);
             csvHeaders = headers;
-            clearLocalMediaMap();
 
             // Detect media columns from headers
             mediaColumns = detectMediaColumns(headers);
@@ -3922,7 +3921,8 @@
             if (mediaBtn) {
                 if (mediaColumns.length > 0 && !csvBaseUrl) {
                     mediaBtn.style.display = '';
-                    updateMediaFolderButton(0);
+                    // Only reset the button count if no media is already loaded
+                    if (Object.keys(localMediaMap).length === 0) updateMediaFolderButton(0);
                 } else {
                     mediaBtn.style.display = 'none';
                 }

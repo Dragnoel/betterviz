@@ -133,3 +133,57 @@ Log of changes made:
 - Added `downloadSnapshot()` – captures the panel grid as PNG and triggers download
 
 **Behavior:** Users can save a snapshot of the current grid visualization as a PNG image. Works in both edit and view modes. Requires network for html2canvas CDN on first use.
+
+---
+
+## Change 11: Uniform panel sizes option
+
+**Files modified:** `layouts/index.html`, `layouts/_default/example-viz.html`, `layouts/shortcodes/visualizer-test.html`, `layouts/_default/full-visualizer.txt`, `tools/local-visualizer.html`
+
+**Changes:**
+- Added "Uniform panel sizes" checkbox in viz-actions
+- Added `uniformPanelSizes` state and `toggleUniformPanels()` handler
+- When enabled: grid rows use `minmax(200px, 1fr)` instead of `auto`; container gets `min-height: 80vh` and `uniform-panels` class
+- When disabled: original auto-sized panels (panels scale with content)
+
+**Behavior:** Users can toggle uniform panel sizes so all panels match the height of the largest panel. Useful when many data points cause panels to vary greatly in size. Public pages will pick this up when Hugo rebuilds.
+
+---
+
+## Change 12: Label styling panel
+
+**Files modified:** `layouts/index.html`, `layouts/_default/example-viz.html`, `layouts/shortcodes/visualizer-test.html`, `layouts/_default/full-visualizer.txt`, `tools/local-visualizer.html`
+
+**Changes:**
+- Added "Label styling" button in viz-actions (before Uniform panel sizes, next to Download CSV)
+- Clicking opens a dropdown with: column labels size, count size, column labels color, count color
+- Panel grid uses CSS variables for dynamic styling
+
+**Behavior:** Users can adjust the size and color of dimension values (ag, as, co, etc.) and item counts (80 items) via a visible dropdown in the viz header. Useful for snapshots and accessibility.
+
+---
+
+## Change 13: Filter values per dimension
+
+**Files modified:** `layouts/index.html`, `layouts/_default/example-viz.html`, `layouts/shortcodes/visualizer-test.html`, `layouts/_default/full-visualizer.txt`, `tools/local-visualizer.html`
+
+**Changes:**
+- Added `dimensionValueFilters` state and `getVisibleValues(dim)`, `setValueFilter(key, value, visible)`, `renderValueFilters(encodings)`
+- Added "Filter values" section in sidebar with per-dimension checkboxes for panelX, panelY, innerX, innerY
+- `updateGridInfo` and visualization rendering use `getVisibleValues()` for panel/inner values
+- `dimensionValueFilters = {}` when loading new data
+
+**Behavior:** Users can choose which dimension values are shown (e.g. for Function_x with ag, as, co, ia, hide some values). Default: all visible. Filters apply to the grid layout and item counts.
+
+---
+
+## Change 14: Configurable report with stats and crosstabs
+
+**Files modified:** `layouts/index.html`, `layouts/_default/example-viz.html`, `layouts/shortcodes/visualizer-test.html`, `layouts/_default/full-visualizer.txt`, `tools/local-visualizer.html`
+
+**Changes:**
+- Added "Report" button in viz-actions (after Snapshot)
+- Report modal lets users choose: Overview (total rows, dimensions), per-dimension stats (count per value, percentage), and crosstabs (dim1 × dim2)
+- "Add crosstab" adds dimension pairs; Generate builds HTML report; Download HTML saves standalone report.html
+
+**Behavior:** Users configure which numbers to include in a report (counts, percentages, crosstabs), then generate and download an HTML report.
